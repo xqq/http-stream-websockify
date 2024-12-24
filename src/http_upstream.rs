@@ -77,7 +77,7 @@ impl HttpUpstream {
                     }
                     Err(e) => {
                         // EOF
-                        println!("Stream meet Eror EOF: {:#?}", e);
+                        println!("Stream meet Error EOF: {:#?}", e);
                         return;
                     }
                 }
