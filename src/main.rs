@@ -1,3 +1,5 @@
+use std::sync::Arc;
+use bytes::Bytes;
 use crate::http_upstream::{BasicAuthInfo, HttpUpstream};
 
 mod http_upstream;
@@ -10,22 +12,40 @@ const BASIC_AUTH_PASS: &str = "password";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let (tx, rx) = tokio::sync::broadcast::channel::<Bytes>(8);
+    let sender = tx;
+
     let basic_auth = BasicAuthInfo {
         username: BASIC_AUTH_USER.to_owned(),
         password: BASIC_AUTH_PASS.to_owned(),
     };
-    let mut upstream = HttpUpstream::new(UPSTREAM_URL, Some(basic_auth));
 
-    upstream.start_polling().await?;
+    let mut upstream = Arc::new(HttpUpstream::new(UPSTREAM_URL, Some(basic_auth), sender));
 
-    println!("Hello, world!");
+    match Arc::get_mut(&mut upstream).unwrap().start_polling().await {
+        Ok(_) => {
+            println!("Upstream polling started");
+        }
+        Err(e) => {
+            println!("Upstream request failed: {:#?}", e.as_ref());
+            return Err(e.into());
+        }
+    }
 
-    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-    upstream.stop_polling();
-    println!("Upstream polling stopped");
-    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    let upstream_clone = upstream.clone();
 
-    println!("Hello, world!");
+    tokio::spawn(async move {
+        let upstream = upstream_clone;
 
+        const SECONDS: u64 = 5;
+        println!("Will stop polling after {}s", SECONDS);
+        tokio::time::sleep(std::time::Duration::from_secs(SECONDS)).await;
+
+        println!("Attempt to stop polling");
+        upstream.stop_polling();
+    });
+
+    upstream.join().await;
+    println!("Returned from upstream.join()");
     Ok(())
 }
