@@ -4,6 +4,7 @@ use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Empty};
+use hyper::body::Incoming;
 use hyper::header::HeaderValue;
 use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::Client;
@@ -63,6 +64,8 @@ impl HttpUpstream {
             .header(hyper::header::HOST, authority.as_str())
             .body(Empty::<Bytes>::new())?;
 
+        let req_clone = req.clone();
+
         // Append Authorization header for basic auth
         if let Some(basic_auth) = &self.basic_auth {
             req.headers_mut().insert(hyper::header::AUTHORIZATION, HeaderValue::from_str(&basic_auth.to_header_value())?);
@@ -72,10 +75,30 @@ impl HttpUpstream {
         let client = Client::builder(TokioExecutor::new())
             .build::<_, Empty::<Bytes>>(https);
 
-        let res = client.request(req).await?;
+        let mut res = client.request(req).await?;
 
         println!("Response: {}", res.status());
         println!("Headers: {:#?}", res.headers());
+
+        let mut redirect_counter = 0;
+
+        // Follow redirection
+        while status_is_redirect(res.status()) && redirect_counter < 5 {
+            if let Some(location) = res.headers().get(hyper::header::LOCATION) {
+                let location = location.to_str().unwrap();
+                println!("{}, redirecting to {}", res.status(), location);
+                res = follow_redirect(location, req_clone.clone()).await?;
+                redirect_counter += 1;
+            } else {
+                let description = "Missing location header for redirection";
+                return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, description)));
+            }
+        }
+
+        if res.status().as_u16() < 200 || res.status().as_u16() > 299 {
+            let description = format!("Invalid HTTP status: {}", res.status());
+            return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, description)));
+        }
 
         let mut body = res.into_body();
 
@@ -125,3 +148,32 @@ impl HttpUpstream {
 
 }
 
+fn status_is_redirect(status: hyper::StatusCode) -> bool {
+    status.as_u16() >= 300 && status.as_u16() <= 399
+}
+
+async fn follow_redirect(location: &str, req: hyper::Request<Empty<Bytes>>) -> Result<hyper::Response<Incoming>> {
+    let redirect_uri = hyper::Uri::from_str(location)?;
+    let authority = redirect_uri.authority().unwrap().clone();
+
+    let mut req = req;
+    *req.uri_mut() = redirect_uri;
+
+    // Fill in new Host header
+    let mut headers = req.headers_mut();
+    if headers.contains_key(hyper::header::HOST) {
+        headers.remove(hyper::header::HOST);
+        headers.insert(hyper::header::HOST, HeaderValue::from_str(authority.as_str())?);
+    }
+
+    let https = HttpsConnector::new();
+    let client = Client::builder(TokioExecutor::new())
+        .build::<_, Empty::<Bytes>>(https);
+
+    let res = client.request(req).await?;
+
+    println!("Response: {}", res.status());
+    println!("Headers: {:#?}", res.headers());
+
+    Ok(res)
+}
