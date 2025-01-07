@@ -160,7 +160,7 @@ async fn follow_redirect(location: &str, req: hyper::Request<Empty<Bytes>>) -> R
     *req.uri_mut() = redirect_uri;
 
     // Fill in new Host header
-    let mut headers = req.headers_mut();
+    let headers = req.headers_mut();
     if headers.contains_key(hyper::header::HOST) {
         headers.remove(hyper::header::HOST);
         headers.insert(hyper::header::HOST, HeaderValue::from_str(authority.as_str())?);
