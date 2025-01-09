@@ -3,6 +3,7 @@ use bytes::Bytes;
 use crate::http_upstream::{BasicAuthInfo, HttpUpstream};
 
 mod http_upstream;
+mod stream_message;
 
 
 const UPSTREAM_URL: &str = "placeholder";
