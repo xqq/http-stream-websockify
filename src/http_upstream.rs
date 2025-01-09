@@ -11,6 +11,7 @@ use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
+use crate::stream_message::{ExitReason, StreamMessage};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -31,7 +32,7 @@ pub struct HttpUpstream {
     basic_auth: Option<BasicAuthInfo>,
 
     cancel_token: CancellationToken,
-    broadcast_sender: tokio::sync::broadcast::Sender<Bytes>,
+    broadcast_sender: tokio::sync::broadcast::Sender<StreamMessage>,
 
     exit_notifier: Arc<Notify>,
 }
@@ -40,7 +41,7 @@ impl HttpUpstream {
     pub fn new(
         url: &str,
         basic_auth: Option<BasicAuthInfo>,
-        broadcast_sender: tokio::sync::broadcast::Sender<Bytes>,
+        broadcast_sender: tokio::sync::broadcast::Sender<StreamMessage>,
     ) -> HttpUpstream {
         HttpUpstream {
             url: hyper::Uri::from_str(url).unwrap(),
@@ -51,7 +52,7 @@ impl HttpUpstream {
         }
     }
 
-    pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<Bytes> {
+    pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<StreamMessage> {
         self.broadcast_sender.subscribe()
     }
 
@@ -104,35 +105,52 @@ impl HttpUpstream {
 
         let cloned_cancel_token = self.cancel_token.clone();
         let broadcast_sender = self.broadcast_sender.clone();
-        let eof_notifier = self.exit_notifier.clone();
+        let exit_notifier = self.exit_notifier.clone();
 
         tokio::spawn(async move {
-            while let Some(frame) = tokio::select! {
-                frame = body.frame() => frame,  // Wait for a new frame (chunk)
-                _ = cloned_cancel_token.cancelled() => None,  // Cancelled on signal
-            } {
-                match frame {
-                    Ok(frame) => {
-                        if frame.is_data() {
-                            let chunk = frame.into_data().unwrap();
-                            println!("chunk size: {}", chunk.len());
-                            // A return value of Err does not mean that future calls to send will fail
-                            // Ignore the possible Error
-                            let _ = broadcast_sender.send(chunk);
+            tokio::select! {
+                _ = cloned_cancel_token.cancelled() => {
+                    // Cancelled by external signal
+                    println!("Cancelled by external signal");
+                    let message = StreamMessage::ExitFlag(ExitReason::CancelledByExternal);
+                    // A return value of Err does not mean that future calls to send will fail
+                    // Ignore the possible Error
+                    let _ = broadcast_sender.send(message);
+                },
+                exit_reason = async {
+                    // Return ExitReason::EndOfStream by default
+                    let mut exit_reason = ExitReason::EndOfStream;
+
+                    while let Some(frame) = body.frame().await {
+                        match frame {
+                            Ok(frame) => {
+                                if frame.is_data() {
+                                    let chunk = frame.into_data().unwrap();
+                                    println!("chunk size: {}", chunk.len());
+
+                                    let message = StreamMessage::Data(chunk);
+                                    let _ = broadcast_sender.send(message);
+                                }
+                            },
+                            Err(e) => {
+                                println!("Stream meet Error: {:#?}", e);
+                                exit_reason = ExitReason::Error;
+                                break;
+                            }
                         }
                     }
-                    Err(e) => {
-                        // EOF
-                        println!("Stream meet Error EOF: {:#?}", e);
+                    // When body.frame() return None, stream meet EOF
+                    exit_reason
+                } => {
+                    if exit_reason == ExitReason::EndOfStream {
+                        println!("Stream has closed with EOF normally");
                     }
+                    let message = StreamMessage::ExitFlag(exit_reason);
+                    let _ = broadcast_sender.send(message);
                 }
-            }
-            if cloned_cancel_token.is_cancelled() {
-                // Cancelled by external signal
-                println!("Cancelled by external signal");
-            }
+            };
 
-            eof_notifier.notify_waiters();
+            exit_notifier.notify_waiters();
         });
 
         Ok(())

@@ -1,6 +1,6 @@
 use std::sync::Arc;
-use bytes::Bytes;
 use crate::http_upstream::{BasicAuthInfo, HttpUpstream};
+use crate::stream_message::StreamMessage;
 
 mod http_upstream;
 mod stream_message;
@@ -13,7 +13,7 @@ const BASIC_AUTH_PASS: &str = "password";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let (tx, rx) = tokio::sync::broadcast::channel::<Bytes>(8);
+    let (tx, _) = tokio::sync::broadcast::channel::<StreamMessage>(8);
     let sender = tx;
 
     let basic_auth = BasicAuthInfo {
