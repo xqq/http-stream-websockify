@@ -46,7 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(e) => {
             println!("Upstream request failed: {:#?}", e.as_ref());
-            return Err(e.into());
+            return Err(e);
         }
     }
 
@@ -74,6 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(e) => {
             println!("WebSocket broadcast server failed to start: {}", e);
+            return Err(e.into());
         }
     }
 
