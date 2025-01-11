@@ -17,8 +17,17 @@ const LISTEN_ADDR: &str = "127.0.0.1";
 const LISTEN_PORT: &str = "8090";
 const MOUNT_ENDPOINT: &str = "/stream/live.ts";
 
+fn setup_tracing() {
+    let subscriber = tracing_subscriber::FmtSubscriber::builder()
+        .with_max_level(tracing::Level::TRACE)
+        .finish();
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    setup_tracing();
+
     let (tx, _) = tokio::sync::broadcast::channel::<StreamMessage>(16);
     let sender = tx;
 
