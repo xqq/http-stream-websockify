@@ -11,7 +11,6 @@ use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
-use crate::stream_message::{ExitReason, StreamMessage};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -27,12 +26,19 @@ impl BasicAuthInfo {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+enum ExitReason {
+    EndOfStream,
+    Error,
+    CancelledByExternal,
+}
+
 pub struct HttpUpstream {
     url: hyper::Uri,
     basic_auth: Option<BasicAuthInfo>,
 
     cancel_token: CancellationToken,
-    output_sender: tokio::sync::mpsc::Sender<StreamMessage>,
+    output_sender: Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::Sender<Bytes>>>>,
 
     exit_notifier: Arc<Notify>,
 }
@@ -41,13 +47,13 @@ impl HttpUpstream {
     pub fn new(
         url: &str,
         basic_auth: Option<BasicAuthInfo>,
-        output_sender: tokio::sync::mpsc::Sender<StreamMessage>,
+        output_sender: tokio::sync::mpsc::Sender<Bytes>,
     ) -> HttpUpstream {
         HttpUpstream {
             url: hyper::Uri::from_str(url).unwrap(),
             basic_auth,
             cancel_token: CancellationToken::new(),
-            output_sender,
+            output_sender: Arc::new(tokio::sync::Mutex::new(Some(output_sender))),
             exit_notifier: Arc::new(Notify::new()),
         }
     }
@@ -108,12 +114,15 @@ impl HttpUpstream {
                 _ = cloned_cancel_token.cancelled() => {
                     // Cancelled by external signal
                     tracing::info!("Cancelled by external signal");
-                    let message = StreamMessage::ExitFlag(ExitReason::CancelledByExternal);
-                    // A return value of Err does not mean that future calls to send will fail
-                    // Ignore the possible Error
-                    let _ = output_sender.send(message).await;
+                    // Swap out and drop the Sender to close channel
+                    let mut output_sender = output_sender.lock().await;
+                    let inner = output_sender.take();
+                    drop(inner);
                 },
                 exit_reason = async {
+                    let output_sender = output_sender.lock().await;
+                    let output_sender = output_sender.as_ref().unwrap();
+
                     // Return ExitReason::EndOfStream by default
                     let mut exit_reason = ExitReason::EndOfStream;
 
@@ -123,8 +132,7 @@ impl HttpUpstream {
                                 if frame.is_data() {
                                     let chunk = frame.into_data().unwrap();
                                     // tracing::trace!("chunk size: {}", chunk.len());
-                                    let message = StreamMessage::Data(chunk);
-                                    let _ = output_sender.send(message).await;
+                                    let _ = output_sender.send(chunk).await;
                                 }
                             },
                             Err(e) => {
@@ -140,8 +148,10 @@ impl HttpUpstream {
                     if exit_reason == ExitReason::EndOfStream {
                         tracing::info!("Stream has closed with EOF normally");
                     }
-                    let message = StreamMessage::ExitFlag(exit_reason);
-                    let _ = output_sender.send(message).await;
+                    // Swap out and drop the Sender to close channel
+                    let mut output_sender = output_sender.lock().await;
+                    let inner = output_sender.take();
+                    drop(inner);
                 }
             };
 

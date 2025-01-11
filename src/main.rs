@@ -1,11 +1,10 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
+use bytes::Bytes;
 use crate::http_upstream::{BasicAuthInfo, HttpUpstream};
-use crate::stream_message::StreamMessage;
 use crate::websocket_broadcast_server::WebSocketBroadcastServer;
 
 mod http_upstream;
-mod stream_message;
 mod websocket_broadcast_server;
 
 
@@ -28,7 +27,7 @@ fn setup_tracing() {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     setup_tracing();
 
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamMessage>(16);
+    let (tx, rx) = tokio::sync::mpsc::channel::<Bytes>(16);
 
     let basic_auth = BasicAuthInfo {
         username: BASIC_AUTH_USER.to_owned(),

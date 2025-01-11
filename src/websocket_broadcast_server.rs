@@ -19,12 +19,10 @@ use hyper::service::service_fn;
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::Notify;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
-use crate::stream_message::StreamMessage;
 
 type Tx = UnboundedSender<Message>;
 type PeerMap = Arc<Mutex<HashMap<SocketAddr, Tx>>>;
@@ -39,7 +37,7 @@ pub struct WebSocketBroadcastServer {
 struct WebSocketServerContext {
     peer_map: PeerMap,
     mount_path: String,
-    input_receiver: Arc<tokio::sync::Mutex<tokio::sync::mpsc::Receiver<StreamMessage>>>,
+    input_receiver: Arc<tokio::sync::Mutex<tokio::sync::mpsc::Receiver<Bytes>>>,
     cancel_token: CancellationToken,
     listener_exit_notifier: Arc<Notify>,
     broadcaster_exit_notifier: Arc<Notify>,
@@ -49,7 +47,7 @@ impl WebSocketBroadcastServer {
 
     pub fn new(listen_addr_port: SocketAddr,
                mount_path: String,
-               mut input_receiver: tokio::sync::mpsc::Receiver<StreamMessage>) -> WebSocketBroadcastServer {
+               input_receiver: tokio::sync::mpsc::Receiver<Bytes>) -> WebSocketBroadcastServer {
         let context = WebSocketServerContext {
             peer_map: PeerMap::new(Mutex::new(HashMap::new())),
             mount_path,
@@ -145,19 +143,13 @@ impl WebSocketBroadcastServer {
 
             tokio::select! {
                 _ = async {
-                    loop {
-                        let mut input_receiver = context.input_receiver.lock().await;
+                    let mut input_receiver = context.input_receiver.lock().await;
 
+                    loop {
                         match input_receiver.recv().await {
-                            Some(StreamMessage::Data(chunk)) => {
+                            Some(chunk) => {
                                 Self::broadcast_message(context.peer_map.clone(), Message::Binary(chunk.to_vec()));
                             },
-                            Some(StreamMessage::ExitFlag(reason)) => {
-                                tracing::info!("Closing due to {reason:?}");
-                                Self::broadcast_message(context.peer_map.clone(), Message::Close(None));
-                                break;
-                            },
-
                             None => {
                                 tracing::info!("Closing due to channel closed");
                                 Self::broadcast_message(context.peer_map.clone(), Message::Close(None));
