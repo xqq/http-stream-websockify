@@ -32,7 +32,7 @@ pub struct HttpUpstream {
     basic_auth: Option<BasicAuthInfo>,
 
     cancel_token: CancellationToken,
-    broadcast_sender: tokio::sync::broadcast::Sender<StreamMessage>,
+    output_sender: tokio::sync::mpsc::Sender<StreamMessage>,
 
     exit_notifier: Arc<Notify>,
 }
@@ -41,19 +41,15 @@ impl HttpUpstream {
     pub fn new(
         url: &str,
         basic_auth: Option<BasicAuthInfo>,
-        broadcast_sender: tokio::sync::broadcast::Sender<StreamMessage>,
+        output_sender: tokio::sync::mpsc::Sender<StreamMessage>,
     ) -> HttpUpstream {
         HttpUpstream {
             url: hyper::Uri::from_str(url).unwrap(),
             basic_auth,
             cancel_token: CancellationToken::new(),
-            broadcast_sender,
+            output_sender,
             exit_notifier: Arc::new(Notify::new()),
         }
-    }
-
-    pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<StreamMessage> {
-        self.broadcast_sender.subscribe()
     }
 
     pub async fn start_polling(&mut self) -> Result<()> {
@@ -104,7 +100,7 @@ impl HttpUpstream {
         let mut body = res.into_body();
 
         let cloned_cancel_token = self.cancel_token.clone();
-        let broadcast_sender = self.broadcast_sender.clone();
+        let output_sender = self.output_sender.clone();
         let exit_notifier = self.exit_notifier.clone();
 
         tokio::spawn(async move {
@@ -115,7 +111,7 @@ impl HttpUpstream {
                     let message = StreamMessage::ExitFlag(ExitReason::CancelledByExternal);
                     // A return value of Err does not mean that future calls to send will fail
                     // Ignore the possible Error
-                    let _ = broadcast_sender.send(message);
+                    let _ = output_sender.send(message).await;
                 },
                 exit_reason = async {
                     // Return ExitReason::EndOfStream by default
@@ -128,7 +124,7 @@ impl HttpUpstream {
                                     let chunk = frame.into_data().unwrap();
                                     // tracing::trace!("chunk size: {}", chunk.len());
                                     let message = StreamMessage::Data(chunk);
-                                    let _ = broadcast_sender.send(message);
+                                    let _ = output_sender.send(message).await;
                                 }
                             },
                             Err(e) => {
@@ -145,7 +141,7 @@ impl HttpUpstream {
                         tracing::info!("Stream has closed with EOF normally");
                     }
                     let message = StreamMessage::ExitFlag(exit_reason);
-                    let _ = broadcast_sender.send(message);
+                    let _ = output_sender.send(message).await;
                 }
             };
 

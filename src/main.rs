@@ -28,8 +28,7 @@ fn setup_tracing() {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     setup_tracing();
 
-    let (tx, _) = tokio::sync::broadcast::channel::<StreamMessage>(16);
-    let sender = tx;
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamMessage>(16);
 
     let basic_auth = BasicAuthInfo {
         username: BASIC_AUTH_USER.to_owned(),
@@ -37,7 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let mut upstream = Arc::new(
-        HttpUpstream::new(UPSTREAM_URL, Some(basic_auth), sender)
+        HttpUpstream::new(UPSTREAM_URL, Some(basic_auth), tx)
     );
 
     match Arc::get_mut(&mut upstream).unwrap().start_polling().await {
@@ -50,13 +49,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let upstream_clone = upstream.clone();
-
-    let get_data_source: Arc<dyn Fn() -> tokio::sync::broadcast::Receiver<StreamMessage> + Send + Sync> = Arc::new(move || {
-        let upstream = &upstream_clone;
-        upstream.subscribe()
-    });
-
 
     let listen_addr_port = format!("{}:{}", LISTEN_ADDR, LISTEN_PORT).parse::<SocketAddr>().unwrap();
 
@@ -64,7 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         WebSocketBroadcastServer::new(
             listen_addr_port,
             MOUNT_ENDPOINT.to_string(),
-            get_data_source
+            rx,
         )
     );
 

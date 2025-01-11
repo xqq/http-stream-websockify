@@ -29,7 +29,6 @@ use crate::stream_message::StreamMessage;
 type Tx = UnboundedSender<Message>;
 type PeerMap = Arc<Mutex<HashMap<SocketAddr, Tx>>>;
 type Body = Full<Bytes>;
-type GetDataSource = Arc<dyn Fn() -> tokio::sync::broadcast::Receiver<StreamMessage> + Send + Sync>;
 
 pub struct WebSocketBroadcastServer {
     listen_addr_port: SocketAddr,
@@ -40,7 +39,7 @@ pub struct WebSocketBroadcastServer {
 struct WebSocketServerContext {
     peer_map: PeerMap,
     mount_path: String,
-    get_data_source: GetDataSource,
+    input_receiver: Arc<tokio::sync::Mutex<tokio::sync::mpsc::Receiver<StreamMessage>>>,
     cancel_token: CancellationToken,
     listener_exit_notifier: Arc<Notify>,
     broadcaster_exit_notifier: Arc<Notify>,
@@ -50,11 +49,11 @@ impl WebSocketBroadcastServer {
 
     pub fn new(listen_addr_port: SocketAddr,
                mount_path: String,
-               get_data_source: GetDataSource) -> WebSocketBroadcastServer {
+               mut input_receiver: tokio::sync::mpsc::Receiver<StreamMessage>) -> WebSocketBroadcastServer {
         let context = WebSocketServerContext {
             peer_map: PeerMap::new(Mutex::new(HashMap::new())),
             mount_path,
-            get_data_source,
+            input_receiver: Arc::new(tokio::sync::Mutex::new(input_receiver)),
             cancel_token: CancellationToken::new(),
             listener_exit_notifier: Arc::new(Notify::new()),
             broadcaster_exit_notifier: Arc::new(Notify::new()),
@@ -144,24 +143,22 @@ impl WebSocketBroadcastServer {
         tokio::spawn(async move {
             tracing::info!("Broadcast startup");
 
-            let mut broadcast_receiver = (context.get_data_source)();
-
             tokio::select! {
                 _ = async {
                     loop {
-                        match broadcast_receiver.recv().await {
-                            Ok(StreamMessage::Data(chunk)) => {
+                        let mut input_receiver = context.input_receiver.lock().await;
+
+                        match input_receiver.recv().await {
+                            Some(StreamMessage::Data(chunk)) => {
                                 Self::broadcast_message(context.peer_map.clone(), Message::Binary(chunk.to_vec()));
                             },
-                            Ok(StreamMessage::ExitFlag(reason)) => {
+                            Some(StreamMessage::ExitFlag(reason)) => {
                                 tracing::info!("Closing due to {reason:?}");
                                 Self::broadcast_message(context.peer_map.clone(), Message::Close(None));
                                 break;
                             },
-                            Err(RecvError::Lagged(_)) => {
-                                tracing::trace!("Broadcast channel lagged, continue with lost messages");
-                            },
-                            Err(RecvError::Closed) => {
+
+                            None => {
                                 tracing::info!("Closing due to channel closed");
                                 Self::broadcast_message(context.peer_map.clone(), Message::Close(None));
                                 break;
