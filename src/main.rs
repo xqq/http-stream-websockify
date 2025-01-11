@@ -4,6 +4,7 @@ use crate::stream_message::StreamMessage;
 
 mod http_upstream;
 mod stream_message;
+mod websocket_broadcast_server;
 
 
 const UPSTREAM_URL: &str = "placeholder";
