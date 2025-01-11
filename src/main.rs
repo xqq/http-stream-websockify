@@ -1,6 +1,8 @@
+use std::net::SocketAddr;
 use std::sync::Arc;
 use crate::http_upstream::{BasicAuthInfo, HttpUpstream};
 use crate::stream_message::StreamMessage;
+use crate::websocket_broadcast_server::WebSocketBroadcastServer;
 
 mod http_upstream;
 mod stream_message;
@@ -11,10 +13,13 @@ const UPSTREAM_URL: &str = "placeholder";
 const BASIC_AUTH_USER: &str = "username";
 const BASIC_AUTH_PASS: &str = "password";
 
+const LISTEN_ADDR: &str = "127.0.0.1";
+const LISTEN_PORT: &str = "8090";
+const MOUNT_ENDPOINT: &str = "/stream/live.ts";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let (tx, _) = tokio::sync::broadcast::channel::<StreamMessage>(8);
+    let (tx, _) = tokio::sync::broadcast::channel::<StreamMessage>(16);
     let sender = tx;
 
     let basic_auth = BasicAuthInfo {
@@ -22,7 +27,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         password: BASIC_AUTH_PASS.to_owned(),
     };
 
-    let mut upstream = Arc::new(HttpUpstream::new(UPSTREAM_URL, Some(basic_auth), sender));
+    let mut upstream = Arc::new(
+        HttpUpstream::new(UPSTREAM_URL, Some(basic_auth), sender)
+    );
 
     match Arc::get_mut(&mut upstream).unwrap().start_polling().await {
         Ok(_) => {
@@ -36,18 +43,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let upstream_clone = upstream.clone();
 
-    tokio::spawn(async move {
-        let upstream = upstream_clone;
-
-        const SECONDS: u64 = 5;
-        println!("Will stop polling after {}s", SECONDS);
-        tokio::time::sleep(std::time::Duration::from_secs(SECONDS)).await;
-
-        println!("Attempt to stop polling");
-        upstream.stop_polling();
+    let get_data_source: Arc<dyn Fn() -> tokio::sync::broadcast::Receiver<StreamMessage> + Send + Sync> = Arc::new(move || {
+        let upstream = &upstream_clone;
+        upstream.subscribe()
     });
 
-    upstream.join().await;
-    println!("Returned from upstream.join()");
+
+    let listen_addr_port = format!("{}:{}", LISTEN_ADDR, LISTEN_PORT).parse::<SocketAddr>().unwrap();
+
+    let mut ws_broadcast_server = Arc::new(
+        WebSocketBroadcastServer::new(
+            listen_addr_port,
+            MOUNT_ENDPOINT.to_string(),
+            get_data_source
+        )
+    );
+
+    match Arc::get_mut(&mut ws_broadcast_server).unwrap().start().await {
+        Ok(_) => {
+            println!("WebSocket broadcast server listening started");
+        }
+        Err(e) => {
+            println!("WebSocket broadcast server failed to start: {}", e);
+        }
+    }
+
+    tokio::join!(upstream.join(), ws_broadcast_server.join());
+    println!("Returned from tokio::join!()");
     Ok(())
 }
