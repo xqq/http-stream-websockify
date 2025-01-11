@@ -31,8 +31,6 @@ type PeerMap = Arc<Mutex<HashMap<SocketAddr, Tx>>>;
 type Body = Full<Bytes>;
 type GetDataSource = Arc<dyn Fn() -> tokio::sync::broadcast::Receiver<StreamMessage> + Send + Sync>;
 
-const TAG: &str = "WebSocketBroadcastServer";
-
 pub struct WebSocketBroadcastServer {
     listen_addr_port: SocketAddr,
     context: WebSocketServerContext,
@@ -80,7 +78,7 @@ impl WebSocketBroadcastServer {
         let context = self.context.clone();
 
         tokio::spawn(async move {
-            println!("[WebSocketBroadcastServer] Listener startup");
+            tracing::info!("Listener startup");
 
             loop {
                 let option: Option<Result<(TcpStream, SocketAddr), std::io::Error>> = tokio::select! {
@@ -96,13 +94,13 @@ impl WebSocketBroadcastServer {
                 };
                 if option.is_none() {
                     // Cancelled by CancellationToken, exit loop
-                    println!("[WebSocketBroadcastServer] Listener exited by cancellation");
+                    tracing::info!("Listener exited by cancellation");
                     break;
                 }
                 let (stream, addr) = match option.unwrap() {
                     Ok((stream, addr)) => (stream, addr),
                     Err(e) => {
-                        println!("[WebSocketBroadcastServer] failed to accept connection: {:?}", e);
+                        tracing::error!("failed to accept connection: {:?}", e);
                         continue;
                     }
                 };
@@ -124,12 +122,12 @@ impl WebSocketBroadcastServer {
                         // Do connection.await
                         result = connection => {
                             if let Err(err) = result {
-                                println!("[WebSocketBroadcastServer] Failed to serve {} : {:?}", addr, err);
+                                tracing::error!("Failed to serve {} : {:?}", addr, err);
                             }
                         }
                         // Handle CancellationToken
                         _ = cancel_token.cancelled() => {
-                            println!("[WebSocketBroadcastServer] Connection exited by cancellation");
+                            tracing::info!("Connection exited by cancellation");
                         },
                     }
                 });
@@ -144,7 +142,7 @@ impl WebSocketBroadcastServer {
         let context = self.context.clone();
 
         tokio::spawn(async move {
-            println!("[WebSocketBroadcastServer] Broadcast startup");
+            tracing::info!("Broadcast startup");
 
             let mut broadcast_receiver = (context.get_data_source)();
 
@@ -156,15 +154,15 @@ impl WebSocketBroadcastServer {
                                 Self::broadcast_message(context.peer_map.clone(), Message::Binary(chunk.to_vec()));
                             },
                             Ok(StreamMessage::ExitFlag(reason)) => {
-                                println!("[WebSocketBroadcastServer] Closing due to {reason:?}");
+                                tracing::info!("Closing due to {reason:?}");
                                 Self::broadcast_message(context.peer_map.clone(), Message::Close(None));
                                 break;
                             },
                             Err(RecvError::Lagged(_)) => {
-                                println!("[WebSocketBroadcastServer] Broadcast channel lagged, continue with lost messages");
+                                tracing::trace!("Broadcast channel lagged, continue with lost messages");
                             },
                             Err(RecvError::Closed) => {
-                                println!("[WebSocketBroadcastServer] Closing due to channel closed");
+                                tracing::info!("Closing due to channel closed");
                                 Self::broadcast_message(context.peer_map.clone(), Message::Close(None));
                                 break;
                             }
@@ -172,7 +170,7 @@ impl WebSocketBroadcastServer {
                     }
                 } => {},
                 _ = context.cancel_token.cancelled() => {
-                    println!("[WebSocketBroadcastServer] WebSocket exited by cancellation");
+                    tracing::info!("WebSocket exited by cancellation");
                     Self::broadcast_message(context.peer_map.clone(), Message::Close(None));
                 },
             }
@@ -211,9 +209,9 @@ impl WebSocketBroadcastServer {
         mut req: Request<Incoming>,
         addr: SocketAddr,
     ) -> Result<Response<Body>, Infallible> {
-        println!("[WebSocketBroadcastServer] Received request, potentially websocket handshake");
-        println!("[WebSocketBroadcastServer] Request uri: {}", req.uri().to_string());
-        println!("[WebSocketBroadcastServer] Request headers: {:#?}", req.headers());
+        tracing::trace!("Received request, potentially websocket handshake");
+        tracing::trace!("Request uri: {}", req.uri().to_string());
+        tracing::trace!("Request headers: {:#?}", req.headers());
 
         let headers = req.headers();
 
@@ -280,7 +278,7 @@ impl WebSocketBroadcastServer {
                     ).await;
                 }
                 Err(error) => {
-                    println!("Upgrade: Upgrade error: {}", error);
+                    tracing::error!("Upgrade: Upgrade error: {}", error);
                 }
             }
         });
@@ -305,7 +303,7 @@ impl WebSocketBroadcastServer {
         websocket_stream: WebSocketStream<TokioAdapter<TokioIo<Upgraded>>>,
         addr: SocketAddr,
     ) {
-        println!("[WebSocketBroadcastServer] WebSocket connection established: {}", addr);
+        tracing::info!("WebSocket connection established: {}", addr);
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let rx = UnboundedReceiverStream::new(rx);
@@ -326,7 +324,7 @@ impl WebSocketBroadcastServer {
             },
         }
 
-        println!("[WebSocketBroadcastServer] WebSocket connection disconnected: {}", addr);
+        tracing::info!("WebSocket connection disconnected: {}", addr);
         context.peer_map.lock().unwrap().remove(&addr);
     }
 
