@@ -2,10 +2,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use bytes::Bytes;
 use crate::http_upstream::{BasicAuthInfo, HttpUpstream};
+use crate::signal_waiter::wait_for_exit_signal;
 use crate::websocket_broadcast_server::WebSocketBroadcastServer;
 
 mod http_upstream;
 mod websocket_broadcast_server;
+mod signal_waiter;
 
 
 const UPSTREAM_URL: &str = "placeholder";
@@ -68,6 +70,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(e.into());
         }
     }
+
+    wait_for_exit_signal().await;
+    upstream.stop_polling();
+    ws_broadcast_server.stop();
 
     tokio::join!(upstream.join(), ws_broadcast_server.join());
     println!("Returned from tokio::join!()");
