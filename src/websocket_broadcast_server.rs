@@ -42,9 +42,10 @@ pub struct WebSocketBroadcastServer {
 struct WebSocketServerContext {
     peer_map: PeerMap,
     mount_path: String,
-    cancel_token: CancellationToken,
-    exit_notifier: Arc<Notify>,
     get_data_source: GetDataSource,
+    cancel_token: CancellationToken,
+    listener_exit_notifier: Arc<Notify>,
+    broadcaster_exit_notifier: Arc<Notify>,
 }
 
 impl WebSocketBroadcastServer {
@@ -55,9 +56,10 @@ impl WebSocketBroadcastServer {
         let context = WebSocketServerContext {
             peer_map: PeerMap::new(Mutex::new(HashMap::new())),
             mount_path,
-            cancel_token: CancellationToken::new(),
-            exit_notifier: Arc::new(Notify::new()),
             get_data_source,
+            cancel_token: CancellationToken::new(),
+            listener_exit_notifier: Arc::new(Notify::new()),
+            broadcaster_exit_notifier: Arc::new(Notify::new()),
         };
 
         WebSocketBroadcastServer {
@@ -67,6 +69,12 @@ impl WebSocketBroadcastServer {
     }
 
     pub async fn start(&mut self) -> Result<(), std::io::Error> {
+        self.start_listener().await?;
+        self.start_broadcaster().await?;
+        Ok(())
+    }
+
+    async fn start_listener(&mut self) -> Result<(), std::io::Error> {
         let listener = TcpListener::bind(self.listen_addr_port).await?;
 
         let context = self.context.clone();
@@ -126,10 +134,65 @@ impl WebSocketBroadcastServer {
                     }
                 });
             }
-            context.exit_notifier.notify_waiters();
+            context.listener_exit_notifier.notify_waiters();
         });
 
         Ok(())
+    }
+
+    async fn start_broadcaster(&mut self) -> Result<(), std::io::Error> {
+        let context = self.context.clone();
+
+        tokio::spawn(async move {
+            println!("[WebSocketBroadcastServer] Broadcast startup");
+
+            let mut broadcast_receiver = (context.get_data_source)();
+
+            tokio::select! {
+                _ = async {
+                    loop {
+                        match broadcast_receiver.recv().await {
+                            Ok(StreamMessage::Data(chunk)) => {
+                                Self::broadcast_message(context.peer_map.clone(), Message::Binary(chunk.to_vec()));
+                            },
+                            Ok(StreamMessage::ExitFlag(reason)) => {
+                                println!("[WebSocketBroadcastServer] Closing due to {reason:?}");
+                                Self::broadcast_message(context.peer_map.clone(), Message::Close(None));
+                                break;
+                            },
+                            Err(RecvError::Lagged(_)) => {
+                                println!("[WebSocketBroadcastServer] Broadcast channel lagged, continue with lost messages");
+                            },
+                            Err(RecvError::Closed) => {
+                                println!("[WebSocketBroadcastServer] Closing due to channel closed");
+                                Self::broadcast_message(context.peer_map.clone(), Message::Close(None));
+                                break;
+                            }
+                        }
+                    }
+                } => {},
+                _ = context.cancel_token.cancelled() => {
+                    println!("[WebSocketBroadcastServer] WebSocket exited by cancellation");
+                    Self::broadcast_message(context.peer_map.clone(), Message::Close(None));
+                },
+            }
+
+            context.broadcaster_exit_notifier.notify_waiters();
+        });
+
+        Ok(())
+    }
+
+    fn broadcast_message(peer_map: PeerMap, message: Message) {
+        let peers = peer_map.lock().unwrap();
+
+        let broadcast_recipients = peers
+            .iter()
+            .map(|(_addr, tx)| tx);
+
+        for tx in broadcast_recipients {
+            let _ = tx.send(message.clone());
+        }
     }
 
     pub fn stop(&self) {
@@ -137,7 +200,10 @@ impl WebSocketBroadcastServer {
     }
 
     pub async fn join(&self) {
-        self.context.exit_notifier.notified().await;
+        tokio::join!(
+            self.context.listener_exit_notifier.notified(),
+            self.context.broadcaster_exit_notifier.notified()
+        );
     }
 
     async fn handle_request(
@@ -241,8 +307,6 @@ impl WebSocketBroadcastServer {
     ) {
         println!("[WebSocketBroadcastServer] WebSocket connection established: {}", addr);
 
-        let mut broadcast_receiver = (context.get_data_source)();
-
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let rx = UnboundedReceiverStream::new(rx);
 
@@ -251,39 +315,14 @@ impl WebSocketBroadcastServer {
         let (outgoing, _incoming) = websocket_stream.split();
 
         let receive_from_others = rx.map(Ok).forward(outgoing);
-
         pin_mut!(receive_from_others);
 
         tokio::select! {
-            _ = async {
-                loop {
-                    match broadcast_receiver.recv().await {
-                        Ok(StreamMessage::Data(chunk)) => {
-                            tx.send(Message::Binary(chunk.to_vec())).unwrap();
-                        },
-                        Ok(StreamMessage::ExitFlag(reason)) => {
-                            println!("[WebSocketBroadcastServer] Closing {} due to {:?}", addr, reason);
-                            tx.send(Message::Close(None)).unwrap();
-                            break;
-                        },
-                        Err(RecvError::Lagged(_)) => {
-                            println!("[WebSocketBroadcastServer] Broadcast channel lagged, continue with lost messages");
-                        },
-                        Err(RecvError::Closed) => {
-                            println!("[WebSocketBroadcastServer] Closing due to channel closed");
-                            tx.send(Message::Close(None)).unwrap();
-                            break;
-                        }
-                    }
-                }
-            } => {},
-
             _ = receive_from_others => (),
 
             // Handle CancellationToken
             _ = context.cancel_token.cancelled() => {
-                println!("[WebSocketBroadcastServer] WebSocket exited by cancellation");
-                tx.send(Message::Close(None)).unwrap();
+                let _ = tx.send(Message::Close(None));
             },
         }
 
