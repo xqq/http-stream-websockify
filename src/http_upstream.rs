@@ -78,8 +78,8 @@ impl HttpUpstream {
 
         let mut res = client.request(req).await?;
 
-        println!("Response: {}", res.status());
-        println!("Headers: {:#?}", res.headers());
+        tracing::info!("Response: {}", res.status());
+        tracing::trace!("Headers: {:#?}", res.headers());
 
         let mut redirect_counter = 0;
 
@@ -87,7 +87,7 @@ impl HttpUpstream {
         while status_is_redirect(res.status()) && redirect_counter < 5 {
             if let Some(location) = res.headers().get(hyper::header::LOCATION) {
                 let location = location.to_str().unwrap();
-                println!("{}, redirecting to {}", res.status(), location);
+                tracing::info!("{}, redirecting to {}", res.status(), location);
                 res = follow_redirect(location, req_clone.clone()).await?;
                 redirect_counter += 1;
             } else {
@@ -111,7 +111,7 @@ impl HttpUpstream {
             tokio::select! {
                 _ = cloned_cancel_token.cancelled() => {
                     // Cancelled by external signal
-                    println!("Cancelled by external signal");
+                    tracing::info!("Cancelled by external signal");
                     let message = StreamMessage::ExitFlag(ExitReason::CancelledByExternal);
                     // A return value of Err does not mean that future calls to send will fail
                     // Ignore the possible Error
@@ -126,12 +126,13 @@ impl HttpUpstream {
                             Ok(frame) => {
                                 if frame.is_data() {
                                     let chunk = frame.into_data().unwrap();
+                                    // tracing::trace!("chunk size: {}", chunk.len());
                                     let message = StreamMessage::Data(chunk);
                                     let _ = broadcast_sender.send(message);
                                 }
                             },
                             Err(e) => {
-                                println!("Stream meet Error: {:#?}", e);
+                                tracing::info!("Stream meet Error: {:#?}", e);
                                 exit_reason = ExitReason::Error;
                                 break;
                             }
@@ -141,7 +142,7 @@ impl HttpUpstream {
                     exit_reason
                 } => {
                     if exit_reason == ExitReason::EndOfStream {
-                        println!("Stream has closed with EOF normally");
+                        tracing::info!("Stream has closed with EOF normally");
                     }
                     let message = StreamMessage::ExitFlag(exit_reason);
                     let _ = broadcast_sender.send(message);
@@ -188,8 +189,8 @@ async fn follow_redirect(location: &str, req: hyper::Request<Empty<Bytes>>) -> R
 
     let res = client.request(req).await?;
 
-    println!("Response: {}", res.status());
-    println!("Headers: {:#?}", res.headers());
+    tracing::info!("Response: {}", res.status());
+    tracing::trace!("Headers: {:#?}", res.headers());
 
     Ok(res)
 }
