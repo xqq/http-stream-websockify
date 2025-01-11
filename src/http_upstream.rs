@@ -126,8 +126,6 @@ impl HttpUpstream {
                             Ok(frame) => {
                                 if frame.is_data() {
                                     let chunk = frame.into_data().unwrap();
-                                    println!("chunk size: {}", chunk.len());
-
                                     let message = StreamMessage::Data(chunk);
                                     let _ = broadcast_sender.send(message);
                                 }
