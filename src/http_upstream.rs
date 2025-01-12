@@ -77,6 +77,8 @@ impl HttpUpstream {
         let client = Client::builder(TokioExecutor::new())
             .build::<_, Empty::<Bytes>>(https);
 
+        tracing::info!("Opening {}", self.url.to_string());
+
         let mut res = client.request(req).await?;
 
         tracing::info!("Response: {}", res.status());
@@ -186,6 +188,8 @@ async fn follow_redirect(location: &str, req: hyper::Request<Empty<Bytes>>) -> R
     let https = HttpsConnector::new();
     let client = Client::builder(TokioExecutor::new())
         .build::<_, Empty::<Bytes>>(https);
+
+    tracing::info!("Opening {}", location);
 
     let res = client.request(req).await?;
 
