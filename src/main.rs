@@ -42,10 +42,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match Arc::get_mut(&mut upstream).unwrap().start_polling().await {
         Ok(_) => {
-            println!("Upstream polling started");
+            tracing::info!("Upstream polling started");
         }
         Err(e) => {
-            println!("Upstream request failed: {:#?}", e.as_ref());
+            tracing::error!("Upstream request failed: {:#?}", e.as_ref());
             return Err(e);
         }
     }
@@ -63,10 +63,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match Arc::get_mut(&mut ws_broadcast_server).unwrap().start().await {
         Ok(_) => {
-            println!("WebSocket broadcast server listening started");
+            tracing::info!("WebSocket broadcast server listening started");
         }
         Err(e) => {
-            println!("WebSocket broadcast server failed to start: {}", e);
+            tracing::error!("WebSocket broadcast server failed to start: {}", e);
             return Err(e.into());
         }
     }
@@ -76,6 +76,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ws_broadcast_server.stop();
 
     tokio::join!(upstream.join(), ws_broadcast_server.join());
-    println!("Returned from tokio::join!()");
+    tracing::trace!("Returned from tokio::join!()");
     Ok(())
 }
