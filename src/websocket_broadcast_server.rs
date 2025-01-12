@@ -129,6 +129,8 @@ impl WebSocketBroadcastServer {
                     }
                 });
             }
+
+            tracing::info!("Listener exit");
             context.listener_exit_notifier.notify_waiters();
         });
 
@@ -139,7 +141,7 @@ impl WebSocketBroadcastServer {
         let context = self.context.clone();
 
         tokio::spawn(async move {
-            tracing::info!("Broadcast startup");
+            tracing::info!("Broadcaster startup");
 
             tokio::select! {
                 _ = async {
@@ -171,6 +173,7 @@ impl WebSocketBroadcastServer {
                 },
             }
 
+            tracing::info!("Broadcaster exit");
             context.broadcaster_exit_notifier.notify_waiters();
         });
 
