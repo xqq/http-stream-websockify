@@ -37,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let mut upstream = Arc::new(
-        HttpUpstream::new(UPSTREAM_URL, Some(basic_auth), tx)
+        HttpUpstream::new(UPSTREAM_URL, Some(basic_auth), tx.clone())
     );
 
     match Arc::get_mut(&mut upstream).unwrap().start_polling().await {

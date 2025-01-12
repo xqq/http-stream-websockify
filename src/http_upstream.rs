@@ -30,7 +30,6 @@ impl BasicAuthInfo {
 enum ExitReason {
     EndOfStream,
     Error,
-    CancelledByExternal,
 }
 
 pub struct HttpUpstream {
@@ -38,7 +37,7 @@ pub struct HttpUpstream {
     basic_auth: Option<BasicAuthInfo>,
 
     cancel_token: CancellationToken,
-    output_sender: Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::Sender<Bytes>>>>,
+    output_sender: Arc<tokio::sync::mpsc::Sender<Bytes>>,
 
     exit_notifier: Arc<Notify>,
 }
@@ -53,7 +52,7 @@ impl HttpUpstream {
             url: hyper::Uri::from_str(url).unwrap(),
             basic_auth,
             cancel_token: CancellationToken::new(),
-            output_sender: Arc::new(tokio::sync::Mutex::new(Some(output_sender))),
+            output_sender: Arc::new(output_sender),
             exit_notifier: Arc::new(Notify::new()),
         }
     }
@@ -114,15 +113,11 @@ impl HttpUpstream {
                 _ = cloned_cancel_token.cancelled() => {
                     // Cancelled by external signal
                     tracing::info!("Cancelled by external signal");
-                    // Swap out and drop the Sender to close channel
-                    let mut output_sender = output_sender.lock().await;
-                    let inner = output_sender.take();
-                    drop(inner);
+                    // Send empty Bytes to notify EOF
+                    let empty = Bytes::new();
+                    let _ = output_sender.send(empty).await;
                 },
                 exit_reason = async {
-                    let output_sender = output_sender.lock().await;
-                    let output_sender = output_sender.as_ref().unwrap();
-
                     // Return ExitReason::EndOfStream by default
                     let mut exit_reason = ExitReason::EndOfStream;
 
@@ -148,10 +143,9 @@ impl HttpUpstream {
                     if exit_reason == ExitReason::EndOfStream {
                         tracing::info!("Stream has closed with EOF normally");
                     }
-                    // Swap out and drop the Sender to close channel
-                    let mut output_sender = output_sender.lock().await;
-                    let inner = output_sender.take();
-                    drop(inner);
+                    // Send empty Bytes to notify EOF
+                    let empty = Bytes::new();
+                    let _ = output_sender.send(empty).await;
                 }
             };
 

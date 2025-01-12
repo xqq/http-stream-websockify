@@ -148,10 +148,17 @@ impl WebSocketBroadcastServer {
                     loop {
                         match input_receiver.recv().await {
                             Some(chunk) => {
-                                Self::broadcast_message(context.peer_map.clone(), Message::Binary(chunk.to_vec()));
+                                if !chunk.is_empty() {
+                                    Self::broadcast_message(context.peer_map.clone(), Message::Binary(chunk.to_vec()));
+                                } else {
+                                    // Received empty Bytes, means end of stream
+                                    tracing::info!("Closing all connections due to channel end of stream");
+                                    Self::broadcast_message(context.peer_map.clone(), Message::Close(None));
+                                    break;
+                                }
                             },
                             None => {
-                                tracing::info!("Closing due to channel closed");
+                                tracing::info!("Closing all connections due to channel closed");
                                 Self::broadcast_message(context.peer_map.clone(), Message::Close(None));
                                 break;
                             }
@@ -159,7 +166,7 @@ impl WebSocketBroadcastServer {
                     }
                 } => {},
                 _ = context.cancel_token.cancelled() => {
-                    tracing::info!("WebSocket exited by cancellation");
+                    tracing::info!("Broadcaster exited by cancellation");
                     Self::broadcast_message(context.peer_map.clone(), Message::Close(None));
                 },
             }
