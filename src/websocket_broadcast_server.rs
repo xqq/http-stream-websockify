@@ -91,7 +91,7 @@ impl WebSocketBroadcastServer {
                 };
                 if option.is_none() {
                     // Cancelled by CancellationToken, exit loop
-                    tracing::info!("Listener exited by cancellation");
+                    tracing::info!("Listener exit by cancellation");
                     break;
                 }
                 let (stream, addr) = match option.unwrap() {
@@ -130,7 +130,7 @@ impl WebSocketBroadcastServer {
                 });
             }
 
-            tracing::info!("Listener exit");
+            tracing::info!("Listener exited");
             context.listener_exit_notifier.notify_waiters();
         });
 
@@ -168,12 +168,12 @@ impl WebSocketBroadcastServer {
                     }
                 } => {},
                 _ = context.cancel_token.cancelled() => {
-                    tracing::info!("Broadcaster exited by cancellation");
+                    tracing::info!("Broadcaster exit by cancellation");
                     Self::broadcast_message(context.peer_map.clone(), Message::Close(None));
                 },
             }
 
-            tracing::info!("Broadcaster exit");
+            tracing::info!("Broadcaster exited");
             context.broadcaster_exit_notifier.notify_waiters();
         });
 
