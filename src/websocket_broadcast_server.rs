@@ -182,6 +182,9 @@ impl WebSocketBroadcastServer {
 
     fn broadcast_message(peer_map: PeerMap, message: Message) {
         let peers = peer_map.lock().unwrap();
+        if peers.is_empty() {
+            return;
+        }
 
         let broadcast_recipients = peers
             .iter()
