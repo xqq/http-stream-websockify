@@ -33,26 +33,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (tx, rx) = buffered_bytes_channel(16, 32 * 1024);
 
-    let basic_auth = BasicAuthInfo {
-        username: BASIC_AUTH_USER.to_owned(),
-        password: BASIC_AUTH_PASS.to_owned(),
-    };
 
-    let mut upstream = Arc::new(
-        HttpUpstream::new(UPSTREAM_URL, Some(basic_auth), tx.clone())
-    );
-
-    match Arc::get_mut(&mut upstream).unwrap().start_polling().await {
-        Ok(_) => {
-            tracing::info!("Upstream polling started");
-        }
-        Err(e) => {
-            tracing::error!("Upstream request failed: {:#?}", e.as_ref());
-            return Err(e);
-        }
-    }
-
-
+    // Setup WebSocket broadcast server
     let listen_addr_port = format!("{}:{}", LISTEN_ADDR, LISTEN_PORT).parse::<SocketAddr>().unwrap();
 
     let mut ws_broadcast_server = Arc::new(
@@ -73,6 +55,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+
+    // Start upstream polling
+    let basic_auth = BasicAuthInfo {
+        username: BASIC_AUTH_USER.to_owned(),
+        password: BASIC_AUTH_PASS.to_owned(),
+    };
+
+    let mut upstream = Arc::new(
+        HttpUpstream::new(UPSTREAM_URL, Some(basic_auth), tx.clone())
+    );
+
+    match Arc::get_mut(&mut upstream).unwrap().start_polling().await {
+        Ok(_) => {
+            tracing::info!("Upstream polling started");
+        }
+        Err(e) => {
+            tracing::error!("Upstream request failed: {:#?}", e.as_ref());
+            return Err(e);
+        }
+    }
+
+
+    // Wait for Ctrl-C, etc. signals
     wait_for_exit_signal().await;
     upstream.stop_polling();
     ws_broadcast_server.stop();
