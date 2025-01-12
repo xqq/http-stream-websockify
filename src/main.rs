@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 use bytes::Bytes;
+use crate::bytes_merger::buffered_bytes_channel;
 use crate::http_upstream::{BasicAuthInfo, HttpUpstream};
 use crate::signal_waiter::wait_for_exit_signal;
 use crate::websocket_broadcast_server::WebSocketBroadcastServer;
@@ -8,6 +9,7 @@ use crate::websocket_broadcast_server::WebSocketBroadcastServer;
 mod http_upstream;
 mod websocket_broadcast_server;
 mod signal_waiter;
+mod bytes_merger;
 
 
 const UPSTREAM_URL: &str = "placeholder";
@@ -29,7 +31,7 @@ fn setup_tracing() {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     setup_tracing();
 
-    let (tx, rx) = tokio::sync::mpsc::channel::<Bytes>(16);
+    let (tx, rx) = buffered_bytes_channel(16, 32 * 1024);
 
     let basic_auth = BasicAuthInfo {
         username: BASIC_AUTH_USER.to_owned(),
