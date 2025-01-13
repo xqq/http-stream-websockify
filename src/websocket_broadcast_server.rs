@@ -8,7 +8,7 @@ use async_tungstenite::tokio::TokioAdapter;
 use async_tungstenite::tungstenite::protocol::Role;
 use async_tungstenite::WebSocketStream;
 use bytes::Bytes;
-use futures::pin_mut;
+use futures::{future, pin_mut, TryStreamExt};
 use futures::stream::StreamExt;
 use http_body_util::Full;
 use hyper::{Method, Request, Response, StatusCode, Version};
@@ -312,12 +312,23 @@ impl WebSocketBroadcastServer {
 
         context.peer_map.lock().unwrap().insert(addr, tx.clone());
 
-        let (outgoing, _incoming) = websocket_stream.split();
+        let (outgoing, incoming) = websocket_stream.split();
+
+        let receive_from_incoming = incoming.try_for_each(|msg: Message | {
+            if msg.is_close() {
+                tracing::info!("WebSocket connection closing from client: {}", addr);
+                tx.send(Message::Close(None)).ok();
+            }
+            future::ok(())
+        });
 
         let receive_from_others = rx.map(Ok).forward(outgoing);
-        pin_mut!(receive_from_others);
+
+        pin_mut!(receive_from_incoming, receive_from_others);
 
         tokio::select! {
+            _ = receive_from_incoming => {},
+
             _ = receive_from_others => (),
 
             // Handle CancellationToken
