@@ -16,7 +16,7 @@ const UPSTREAM_URL: &str = "placeholder";
 const BASIC_AUTH_USER: &str = "username";
 const BASIC_AUTH_PASS: &str = "password";
 
-const LISTEN_ADDR: &str = "127.0.0.1";
+const LISTEN_ADDR: &str = "0.0.0.0";
 const LISTEN_PORT: &str = "8090";
 const MOUNT_ENDPOINT: &str = "/stream/live.ts";
 
