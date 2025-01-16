@@ -130,8 +130,8 @@ impl WebSocketBroadcastServer {
                 });
             }
 
-            tracing::info!("Listener exited");
             context.listener_exit_notifier.notify_waiters();
+            tracing::info!("Listener exited");
         });
 
         Ok(())
@@ -173,8 +173,8 @@ impl WebSocketBroadcastServer {
                 },
             }
 
-            tracing::info!("Broadcaster exited");
             context.broadcaster_exit_notifier.notify_waiters();
+            tracing::info!("Broadcaster exited");
         });
 
         Ok(())

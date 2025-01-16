@@ -111,6 +111,8 @@ impl HttpUpstream {
         let exit_notifier = self.exit_notifier.clone();
 
         tokio::spawn(async move {
+            tracing::info!("Stream polling started");
+
             tokio::select! {
                 _ = cloned_cancel_token.cancelled() => {
                     // Cancelled by external signal
@@ -152,6 +154,7 @@ impl HttpUpstream {
             };
 
             exit_notifier.notify_waiters();
+            tracing::info!("Stream polling exited");
         });
 
         Ok(())
